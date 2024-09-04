@@ -172,7 +172,7 @@ func (h *HttpRequestHandler) sendResponse(httpVersion string, statusCode int, st
 
 	headers := fmt.Sprintf("Content-Type: text/plain\r\nContent-Length: %d\r\n", len(responseBody))
 	if len(is_gzip) > 0 && is_gzip[0] {
-		headers += "Content-Encoding: is_gzip\r\n"
+		headers += "Content-Encoding: gzip\r\n"
 	}
 
 	h.sendResponseWithHeaders(httpVersion, statusCode, statusMessage, headers, responseBody)

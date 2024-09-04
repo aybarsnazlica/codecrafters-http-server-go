@@ -17,12 +17,13 @@ type HttpRequestHandler struct {
 	directory string
 }
 
-func NewHttpRequestHandler(conn net.Conn, directory string) *HttpRequestHandler {
-	return &HttpRequestHandler{conn: conn, directory: directory}
-}
-
 func (h *HttpRequestHandler) Handle() {
-	defer h.conn.Close()
+	defer func(conn net.Conn) {
+		err := conn.Close()
+		if err != nil {
+
+		}
+	}(h.conn)
 	reader := bufio.NewReader(h.conn)
 
 	// Read the first line (request line)
@@ -154,9 +155,9 @@ func (h *HttpRequestHandler) handleEchoRequest(target, httpVersion string, heade
 	h.sendResponse(httpVersion, 200, "OK", msg, isGzip)
 }
 
-func (h *HttpRequestHandler) sendResponse(httpVersion string, statusCode int, statusMessage, content string, is_gzip ...bool) {
+func (h *HttpRequestHandler) sendResponse(httpVersion string, statusCode int, statusMessage, content string, isGzip ...bool) {
 	var responseBody []byte
-	if len(is_gzip) > 0 && is_gzip[0] {
+	if len(isGzip) > 0 && isGzip[0] {
 		var byteStream strings.Builder
 		gzipWriter := gzip.NewWriter(&byteStream)
 		_, err := gzipWriter.Write([]byte(content))
@@ -164,14 +165,17 @@ func (h *HttpRequestHandler) sendResponse(httpVersion string, statusCode int, st
 			fmt.Println("Error writing is_gzip content:", err)
 			return
 		}
-		gzipWriter.Close()
+		err = gzipWriter.Close()
+		if err != nil {
+			return
+		}
 		responseBody = []byte(byteStream.String())
 	} else {
 		responseBody = []byte(content)
 	}
 
 	headers := fmt.Sprintf("Content-Type: text/plain\r\nContent-Length: %d\r\n", len(responseBody))
-	if len(is_gzip) > 0 && is_gzip[0] {
+	if len(isGzip) > 0 && isGzip[0] {
 		headers += "Content-Encoding: gzip\r\n"
 	}
 
@@ -180,7 +184,16 @@ func (h *HttpRequestHandler) sendResponse(httpVersion string, statusCode int, st
 
 func (h *HttpRequestHandler) sendResponseWithHeaders(httpVersion string, statusCode int, statusMessage, headers string, body []byte) {
 	response := fmt.Sprintf("%s %d %s\r\n%s\r\n", httpVersion, statusCode, statusMessage, headers)
-	h.conn.Write([]byte(response))
-	h.conn.Write(body)
-	h.conn.Close()
+	_, err := h.conn.Write([]byte(response))
+	if err != nil {
+		return
+	}
+	_, err = h.conn.Write(body)
+	if err != nil {
+		return
+	}
+	err = h.conn.Close()
+	if err != nil {
+		return
+	}
 }

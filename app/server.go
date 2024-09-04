@@ -7,8 +7,7 @@ import (
 )
 
 const (
-	threadPoolSize = 10
-	port           = 4221
+	port = 4221
 )
 
 type HttpServer struct {
@@ -30,7 +29,12 @@ func (s *HttpServer) Start() {
 		fmt.Println("Error starting server:", err)
 		return
 	}
-	defer listener.Close()
+	defer func(listener net.Listener) {
+		err := listener.Close()
+		if err != nil {
+
+		}
+	}(listener)
 
 	fmt.Printf("Server is listening on port %d\n", port)
 

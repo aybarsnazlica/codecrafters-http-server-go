@@ -70,6 +70,12 @@ func (h *HttpRequestHandler) handleGet(target string) {
 		return
 	}
 
+	if strings.HasPrefix(target, "/echo/") {
+		msg := strings.TrimPrefix(target, "/echo/")
+		h.sendResponseWithBody(http.StatusOK, "OK", msg, false)
+		return
+	}
+
 	filePath := filepath.Join(h.directory, target)
 	if fileInfo, err := os.Stat(filePath); err == nil && !fileInfo.IsDir() {
 		file, err := os.Open(filePath)
@@ -86,6 +92,12 @@ func (h *HttpRequestHandler) handleGet(target string) {
 	} else {
 		h.sendResponse(http.StatusNotFound, "Not Found")
 	}
+}
+
+func (h *HttpRequestHandler) sendResponseWithBody(statusCode int, statusText, body string, gzip bool) {
+	headers := fmt.Sprintf("HTTP/1.1 %d %s\r\nContent-Type: text/plain\r\nContent-Length: %d\r\n\r\n", statusCode, statusText, len(body))
+	h.conn.Write([]byte(headers))
+	h.conn.Write([]byte(body))
 }
 
 func (h *HttpRequestHandler) sendResponse(statusCode int, statusText string) {

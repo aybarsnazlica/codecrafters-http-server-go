@@ -65,6 +65,11 @@ func parseRequestLine(line string) (string, string, string, error) {
 }
 
 func (h *HttpRequestHandler) handleGet(target string) {
+	if target == "/" {
+		h.sendResponse(http.StatusOK, "OK")
+		return
+	}
+
 	filePath := filepath.Join(h.directory, target)
 	if fileInfo, err := os.Stat(filePath); err == nil && !fileInfo.IsDir() {
 		file, err := os.Open(filePath)

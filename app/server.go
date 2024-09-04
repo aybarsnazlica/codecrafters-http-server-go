@@ -3,28 +3,57 @@ package main
 import (
 	"fmt"
 	"net"
-	"os"
+	"sync"
 )
 
-// Ensures gofmt doesn't remove the "net" and "os" imports above (feel free to remove this!)
-var _ = net.Listen
-var _ = os.Exit
+const (
+	threadPoolSize = 10
+	port           = 4221
+)
 
-func main() {
-	// You can use print statements as follows for debugging, they'll be visible when running tests.
-	fmt.Println("Logs from your program will appear here!")
+type HttpServer struct {
+	directory string
+	running   bool
+	wg        sync.WaitGroup
+}
 
-	// Uncomment this block to pass the first stage
-	//
-	// l, err := net.Listen("tcp", "0.0.0.0:4221")
-	// if err != nil {
-	// 	fmt.Println("Failed to bind to port 4221")
-	// 	os.Exit(1)
-	// }
-	//
-	// _, err = l.Accept()
-	// if err != nil {
-	// 	fmt.Println("Error accepting connection: ", err.Error())
-	// 	os.Exit(1)
-	// }
+func NewHttpServer(directory string) *HttpServer {
+	return &HttpServer{
+		directory: directory,
+		running:   true,
+	}
+}
+
+func (s *HttpServer) Start() {
+	listener, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
+	if err != nil {
+		fmt.Println("Error starting server:", err)
+		return
+	}
+	defer listener.Close()
+
+	fmt.Printf("Server is listening on port %d\n", port)
+
+	for s.running {
+		conn, err := listener.Accept()
+		if err != nil {
+			if s.running {
+				fmt.Println("Error accepting connection:", err)
+			}
+			continue
+		}
+
+		s.wg.Add(1)
+		go func() {
+			defer s.wg.Done()
+			handler := HttpRequestHandler{conn: conn, directory: s.directory}
+			handler.HandleRequest()
+		}()
+	}
+	s.wg.Wait()
+}
+
+func (s *HttpServer) Stop() {
+	s.running = false
+	fmt.Println("Server stopping...")
 }

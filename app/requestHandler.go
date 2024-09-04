@@ -2,12 +2,13 @@ package main
 
 import (
 	"bufio"
+	"compress/gzip"
 	"fmt"
 	"io"
 	"net"
-	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
@@ -16,91 +17,170 @@ type HttpRequestHandler struct {
 	directory string
 }
 
-func (h *HttpRequestHandler) HandleRequest() {
+func NewHttpRequestHandler(conn net.Conn, directory string) *HttpRequestHandler {
+	return &HttpRequestHandler{conn: conn, directory: directory}
+}
+
+func (h *HttpRequestHandler) Handle() {
 	defer h.conn.Close()
-
 	reader := bufio.NewReader(h.conn)
-	requestLine, err := reader.ReadString('\n')
+
+	// Read the first line (request line)
+	line, err := reader.ReadString('\n')
 	if err != nil {
-		fmt.Println("Error reading request:", err)
+		fmt.Println("Error reading request line:", err)
 		return
 	}
 
-	method, target, _, err := parseRequestLine(requestLine)
-	if err != nil {
-		h.sendResponse(http.StatusBadRequest, "Bad Request")
+	h.processRequest(line, reader)
+}
+
+func (h *HttpRequestHandler) processRequest(line string, reader *bufio.Reader) {
+	tokens := strings.Fields(line)
+	if len(tokens) != 3 {
+		h.sendResponse("HTTP/1.1", 400, "Bad Request", "")
 		return
 	}
 
+	httpMethod := tokens[0]
+	requestTarget := tokens[1]
+	httpVersion := tokens[2]
+
+	// Read headers
 	headers := make(map[string]string)
 	for {
-		line, err := reader.ReadString('\n')
+		headerLine, err := reader.ReadString('\n')
 		if err != nil {
+			fmt.Println("Error reading header line:", err)
 			return
 		}
-		line = strings.TrimSpace(line)
-		if line == "" {
+
+		headerLine = strings.TrimSpace(headerLine)
+		if headerLine == "" {
 			break
 		}
-		parts := strings.SplitN(line, ": ", 2)
-		if len(parts) == 2 {
-			headers[parts[0]] = parts[1]
+
+		headerTokens := strings.SplitN(headerLine, ": ", 2)
+		if len(headerTokens) == 2 {
+			headers[headerTokens[0]] = headerTokens[1]
 		}
 	}
 
-	switch method {
+	switch httpMethod {
 	case "GET":
-		h.handleGet(target)
+		h.handleGet(requestTarget, httpVersion, headers)
+	case "POST":
+		h.handlePost(requestTarget, httpVersion, reader, headers)
 	default:
-		h.sendResponse(http.StatusMethodNotAllowed, "Method Not Allowed")
+		h.sendResponse(httpVersion, 405, "Method Not Allowed", "")
 	}
 }
 
-func parseRequestLine(line string) (string, string, string, error) {
-	parts := strings.Fields(line)
-	if len(parts) != 3 {
-		return "", "", "", fmt.Errorf("invalid request line")
+func (h *HttpRequestHandler) handleGet(target, httpVersion string, headers map[string]string) {
+	switch {
+	case target == "/":
+		h.sendResponse(httpVersion, 200, "OK", "OK")
+	case strings.HasPrefix(target, "/files"):
+		h.handleFileRequest(target, httpVersion)
+	case target == "/user-agent":
+		h.handleUserAgentRequest(httpVersion, headers)
+	case strings.HasPrefix(target, "/echo"):
+		h.handleEchoRequest(target, httpVersion, headers)
+	default:
+		h.sendResponse(httpVersion, 404, "Not Found", "")
 	}
-	return parts[0], parts[1], parts[2], nil
 }
 
-func (h *HttpRequestHandler) handleGet(target string) {
-	if target == "/" {
-		h.sendResponse(http.StatusOK, "OK")
+func (h *HttpRequestHandler) handlePost(target, httpVersion string, reader *bufio.Reader, headers map[string]string) {
+	if strings.HasPrefix(target, "/files") {
+		h.handleFileCreation(target, httpVersion, reader, headers)
+	}
+}
+
+func (h *HttpRequestHandler) handleFileCreation(target, httpVersion string, reader *bufio.Reader, headers map[string]string) {
+	fileName := strings.TrimPrefix(target, "/files/")
+	filePath := filepath.Join(h.directory, fileName)
+	contentLength, err := strconv.Atoi(headers["Content-Length"])
+	if err != nil {
+		h.sendResponse(httpVersion, 400, "Bad Request", "")
 		return
 	}
 
-	if strings.HasPrefix(target, "/echo/") {
-		msg := strings.TrimPrefix(target, "/echo/")
-		h.sendResponseWithBody(http.StatusOK, "OK", msg, false)
+	body := make([]byte, contentLength)
+	_, err = io.ReadFull(reader, body)
+	if err != nil {
+		h.sendResponse(httpVersion, 500, "Internal Server Error", "")
 		return
 	}
 
-	filePath := filepath.Join(h.directory, target)
-	if fileInfo, err := os.Stat(filePath); err == nil && !fileInfo.IsDir() {
-		file, err := os.Open(filePath)
+	err = os.WriteFile(filePath, body, 0644)
+	if err != nil {
+		h.sendResponse(httpVersion, 500, "Internal Server Error", "")
+		return
+	}
+
+	h.sendResponse(httpVersion, 201, "Created", "")
+}
+
+func (h *HttpRequestHandler) handleFileRequest(target, httpVersion string) {
+	fileName := strings.TrimPrefix(target, "/files/")
+	filePath := filepath.Join(h.directory, fileName)
+
+	fileContent, err := os.ReadFile(filePath)
+	if err != nil {
+		h.sendResponse(httpVersion, 404, "Not Found", "")
+		return
+	}
+
+	headers := fmt.Sprintf("Content-Type: application/octet-stream\r\nContent-Length: %d\r\n", len(fileContent))
+	h.sendResponseWithHeaders(httpVersion, 200, "OK", headers, fileContent)
+}
+
+func (h *HttpRequestHandler) handleUserAgentRequest(httpVersion string, headers map[string]string) {
+	userAgent := headers["User-Agent"]
+	if userAgent == "" {
+		h.sendResponse(httpVersion, 400, "Bad Request", "")
+		return
+	}
+
+	h.sendResponse(httpVersion, 200, "OK", userAgent)
+}
+
+func (h *HttpRequestHandler) handleEchoRequest(target, httpVersion string, headers map[string]string) {
+	msg := strings.TrimPrefix(target, "/echo/")
+	acceptEncoding := headers["Accept-Encoding"]
+	isGzip := strings.Contains(acceptEncoding, "gzip")
+
+	h.sendResponse(httpVersion, 200, "OK", msg, isGzip)
+}
+
+func (h *HttpRequestHandler) sendResponse(httpVersion string, statusCode int, statusMessage, content string, is_gzip ...bool) {
+	var responseBody []byte
+	if len(is_gzip) > 0 && is_gzip[0] {
+		var byteStream strings.Builder
+		gzipWriter := gzip.NewWriter(&byteStream)
+		_, err := gzipWriter.Write([]byte(content))
 		if err != nil {
-			h.sendResponse(http.StatusInternalServerError, "Internal Server Error")
+			fmt.Println("Error writing is_gzip content:", err)
 			return
 		}
-		defer file.Close()
-
-		h.conn.Write([]byte("HTTP/1.1 200 OK\r\n"))
-		h.conn.Write([]byte("Content-Type: text/plain\r\n"))
-		h.conn.Write([]byte("\r\n"))
-		io.Copy(h.conn, file)
+		gzipWriter.Close()
+		responseBody = []byte(byteStream.String())
 	} else {
-		h.sendResponse(http.StatusNotFound, "Not Found")
+		responseBody = []byte(content)
 	}
+
+	headers := fmt.Sprintf("Content-Type: text/plain\r\nContent-Length: %d\r\n", len(responseBody))
+	if len(is_gzip) > 0 && is_gzip[0] {
+		headers += "Content-Encoding: is_gzip\r\n"
+	}
+
+	h.sendResponseWithHeaders(httpVersion, statusCode, statusMessage, headers, responseBody)
 }
 
-func (h *HttpRequestHandler) sendResponseWithBody(statusCode int, statusText, body string, gzip bool) {
-	headers := fmt.Sprintf("HTTP/1.1 %d %s\r\nContent-Type: text/plain\r\nContent-Length: %d\r\n\r\n", statusCode, statusText, len(body))
-	h.conn.Write([]byte(headers))
-	h.conn.Write([]byte(body))
-}
-
-func (h *HttpRequestHandler) sendResponse(statusCode int, statusText string) {
-	response := fmt.Sprintf("HTTP/1.1 %d %s\r\n\r\n", statusCode, statusText)
+func (h *HttpRequestHandler) sendResponseWithHeaders(httpVersion string, statusCode int, statusMessage, headers string, body []byte) {
+	response := fmt.Sprintf("%s %d %s\r\n%s\r\n", httpVersion, statusCode, statusMessage, headers)
 	h.conn.Write([]byte(response))
+	h.conn.Write(body)
+	h.conn.Close()
 }

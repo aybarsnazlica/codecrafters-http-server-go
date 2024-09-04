@@ -47,7 +47,7 @@ func (s *HttpServer) Start() {
 		go func() {
 			defer s.wg.Done()
 			handler := HttpRequestHandler{conn: conn, directory: s.directory}
-			handler.HandleRequest()
+			handler.Handle()
 		}()
 	}
 	s.wg.Wait()

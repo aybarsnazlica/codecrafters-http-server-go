@@ -5,6 +5,7 @@ import (
 	"compress/gzip"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"os"
 	"path/filepath"
@@ -21,7 +22,7 @@ func (h *HttpRequestHandler) Handle() {
 	defer func(conn net.Conn) {
 		err := conn.Close()
 		if err != nil {
-
+			log.Fatal(err)
 		}
 	}(h.conn)
 	reader := bufio.NewReader(h.conn)

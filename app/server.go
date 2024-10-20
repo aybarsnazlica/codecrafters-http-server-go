@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"log"
 	"net"
 	"sync"
 )
@@ -32,7 +33,7 @@ func (s *HttpServer) Start() {
 	defer func(listener net.Listener) {
 		err := listener.Close()
 		if err != nil {
-
+			log.Fatal(err)
 		}
 	}(listener)
 
